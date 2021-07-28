@@ -45,19 +45,22 @@ class HAttention1D(nn.Module):
         causal = False,
         heads = 8,
         dim_head = 64,
-        block_size = 16
+        block_size = 16,
+        num_hierarchies = 3
     ):
         super().__init__()
         self.causal = causal
+        self.heads = heads
         self.scale = dim_head ** -0.5
         self.block_size = block_size
+        self.num_hierarchies = num_hierarchies
         inner_dim = heads * dim_head
 
         self.to_qkv = nn.Linear(dim, inner_dim, bias = False)
         self.to_out = nn.Linear(inner_dim, dim)
 
     def forward(self, x, mask = None):
-        b, n, *_, device, bsz = *x.shape, x.device, self.block_size
+        b, n, h, device, bsz = *x.shape[:2], self.heads, x.device, self.block_size
         q, k, v = self.to_qkv(x).chunk(3, dim = -1)
 
         return self.to_out(v)
@@ -88,7 +91,7 @@ class HTransformer1D(nn.Module):
 
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                PreNorm(dim, HAttention1D(dim, causal = causal, dim_head = dim_head, heads = heads, block_size = block_size)),
+                PreNorm(dim, HAttention1D(dim, causal = causal, dim_head = dim_head, heads = heads, block_size = block_size, num_hierarchies = num_hierarchies)),
                 PreNorm(dim, FeedForward(dim, mult = ff_mult))
             ]))
 
