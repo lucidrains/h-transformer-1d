@@ -186,6 +186,9 @@ class HTransformer1D(nn.Module):
         b, n, device = *x.shape, x.device
         x = self.token_emb(x)
 
+        pos_emb = self.pos_emb(torch.arange(n, device = device))
+        x = x + rearrange(pos_emb, 'n d -> () n d')
+
         for attn, ff in self.layers:
             x = attn(x, mask = mask) + x
             x = ff(x) + x
