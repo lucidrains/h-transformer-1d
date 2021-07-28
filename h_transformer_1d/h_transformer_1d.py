@@ -1,6 +1,6 @@
 from math import log2
 import torch
-from torch import nn, einsum
+from torch import nn, einsum, diagonal
 import torch.nn.functional as F
 
 from einops import rearrange, reduce, repeat
@@ -94,12 +94,14 @@ class HAttention1D(nn.Module):
 
         # half-attention function
 
-        def calculate_Y_and_A(q, k, v):
+        def calculate_Y_and_A(q, k, v, causal = False, off_diagonal_causal = False):
             S = einsum('... i d, ... j d -> ... i j', q, k)
             A = S.exp()
             y = einsum('... i j, ... j d -> ... i d', A, v)
 
-            A = reduce(A, 'b ... z j -> b (... z)', 'sum')
+            A = diagonal(A.cumsum(dim = -1), dim1 = -2, dim2 = -1) if causal else A.sum(dim = -1)
+            A = rearrange(A, 'b ... i -> b (... i)')
+
             y = rearrange(y, 'b ... n d -> b (... n) d')
             return y, A
 
@@ -115,10 +117,10 @@ class HAttention1D(nn.Module):
             k = torch.flip(k, dims = (2,))                          # so we pay attention to the off-diagonal blocks in the attention matrix
             k = rearrange(k, 'b n r z d -> b (n r) z d')
 
-            coarsened_Y = calculate_Y_and_A(q, k, v)
+            coarsened_Y = calculate_Y_and_A(q, k, v, off_diagonal_causal = causal)
             Ys.append(coarsened_Y)
 
-        top_level_Y = calculate_Y_and_A(*map(to_blocks, top_level_qkvs))
+        top_level_Y = calculate_Y_and_A(*map(to_blocks, top_level_qkvs), causal = causal)
         Ys.append(top_level_Y)
 
         # interpolate
@@ -136,9 +138,9 @@ class HAttention1D(nn.Module):
             Y = Y_level + Y
             A = A_level + A
 
-        out = Y / rearrange(A + self.eps, 'b n -> b n ()')
+        out = Y / rearrange(A + eps, 'b n -> b n ()')
 
-        # merge heads and merge blocks back into sequence
+        # merge heads
 
         out = rearrange(out, '(b h) n d -> b n (h d)', h = h)
 
