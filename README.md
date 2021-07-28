@@ -1,3 +1,5 @@
+<img src="./h-transformer.png" width="300px"></img>
+
 ## H-Transformer-1D
 
 Implementation of <a href="https://arxiv.org/abs/2107.11906">H-Transformer-1D</a>, Transformer using hierarchical Attention for sequence learning with subquadratic costs.
