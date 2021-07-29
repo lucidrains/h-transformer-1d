@@ -28,10 +28,12 @@ model = HTransformer1D(
     block_size = 128           # block size
 )
 
-x = torch.randint(0, 256, (1, 1024))
-mask = torch.ones((1, 1024)).bool()
+x = torch.randint(0, 256, (1, 1017))   # variable sequence length
+mask = torch.ones((1, 1017)).bool()    # variable mask length
 
-logits = model(x, mask = mask) # (1, 1024, 256)
+# network will automatically pad to power of 2, do hierarchical attention, etc
+
+logits = model(x, mask = mask) # (1, 1017, 256)
 ```
 
 ## Citations

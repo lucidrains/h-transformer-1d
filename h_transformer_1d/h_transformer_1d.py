@@ -1,4 +1,4 @@
-from math import log2
+from math import log2, ceil
 import torch
 from torch import nn, einsum, diagonal
 import torch.nn.functional as F
@@ -79,6 +79,16 @@ class HAttention1D(nn.Module):
 
     def forward(self, x, mask = None):
         b, n, h, device, bsz, eps = *x.shape[:2], self.heads, x.device, self.block_size, self.eps
+
+        # pad sequence length to power of 2
+
+        pad_to_len = 2 ** ceil(log2(n))
+        padding = pad_to_len - n
+
+        if padding != 0:
+            x = F.pad(x, (0, 0, 0, padding), value = 0.)
+            if exists(mask):
+                mask = F.pad(mask, (0, padding), value = False)
 
         # derive queries, keys, values
 
@@ -195,7 +205,7 @@ class HAttention1D(nn.Module):
 
         # combine out
 
-        return self.to_out(out)
+        return self.to_out(out[:, :n])
 
 # main class
 
@@ -213,6 +223,10 @@ class HTransformer1D(nn.Module):
         block_size = 128      # this is the Nr in the paper - Nb = (max_seq_len / tokens_per_block)
     ):
         super().__init__()
+        assert (max_seq_len % block_size) == 0, 'maximum sequence length must be divisible by the block size'
+        num_blocks = max_seq_len // block_size
+        assert log2(max_seq_len // block_size).is_integer(), f'number of blocks {num_blocks} must be a power of 2'
+
         self.token_emb = nn.Embedding(num_tokens, dim)
         self.pos_emb = nn.Embedding(max_seq_len, dim)
         self.max_seq_len = max_seq_len
@@ -232,6 +246,8 @@ class HTransformer1D(nn.Module):
 
     def forward(self, x, mask = None):
         b, n, device = *x.shape, x.device
+        assert n <= self.max_seq_len, 'sequence length must be less than the maximum sequence length'
+
         x = self.token_emb(x)
 
         pos_emb = self.pos_emb(torch.arange(n, device = device))
