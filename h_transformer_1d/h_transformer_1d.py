@@ -98,10 +98,9 @@ class HAttention1D(nn.Module):
         def calculate_Y_and_A(q, k, v, mask_A = False, remove_right_off_diagonals = False):
             if remove_right_off_diagonals:
                 q, k, v = map(lambda t: rearrange(t, 'b (n r) z d -> b n r z d', r = 2), (q, k, v))
-                q, k, v = map(lambda t: t[:, :, 0], (q, k, v))
+                q, k, v = map(lambda t: t[:, :, 1], (q, k, v))
 
             S = einsum('... i d, ... j d -> ... i j', q, k)
-            S = S - torch.amax(S, dim = -1, keepdim = True)
 
             if mask_A:
                 device = q.device
@@ -111,7 +110,9 @@ class HAttention1D(nn.Module):
                 mask = rearrange(mask, 'i j -> () () i j')
                 S = S.masked_fill(mask, mask_value)
 
+            S = S - torch.amax(S, dim = -1, keepdim = True)
             A = S.exp()
+
             y = einsum('... i j, ... j d -> ... i d', A, v)
 
             A = A.sum(dim = -1)
