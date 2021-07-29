@@ -171,7 +171,7 @@ class HAttention1D(nn.Module):
             if exists(mask):
                 mask = to_blocks(mask)
                 q_mask = mask
-                k_mask = flip_every_two(mask) if is_last else mask
+                k_mask = flip_every_two(mask) if not is_last else mask
                 S_mask = rearrange(q_mask, '... n -> ... n ()') * rearrange(k_mask, '... n -> ... () n')
 
             # flip keys and values to capture the off-diagonals
