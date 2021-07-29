@@ -98,7 +98,7 @@ class HAttention1D(nn.Module):
         def calculate_Y_and_A(q, k, v, mask_A = False, remove_right_off_diagonals = False):
             if remove_right_off_diagonals:
                 q, k, v = map(lambda t: rearrange(t, 'b (n r) z d -> b n r z d', r = 2), (q, k, v))
-                q, k, v = map(lambda t: t[:, :, 1], (q, k, v))
+                q, k, v = map(lambda t: t[:, :, 0], (q, k, v))
 
             S = einsum('... i d, ... j d -> ... i j', q, k)
 
@@ -139,6 +139,10 @@ class HAttention1D(nn.Module):
             k = rearrange(k, 'b (n r) z d -> b n r z d', r = 2)
             k = torch.flip(k, dims = (2,))                          # so we pay attention to the off-diagonal blocks in the attention matrix
             k = rearrange(k, 'b n r z d -> b (n r) z d')
+
+            v = rearrange(v, 'b (n r) z d -> b n r z d', r = 2)
+            v = torch.flip(v, dims = (2,))
+            v = rearrange(v, 'b n r z d -> b (n r) z d')
 
             coarsened_Y = calculate_Y_and_A(q, k, v, remove_right_off_diagonals = causal)
             Ys.append(coarsened_Y)
