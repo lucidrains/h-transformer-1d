@@ -135,7 +135,7 @@ class HAttention1D(nn.Module):
 
             if exists(mask):
                 mask_value = -torch.finfo(S.dtype).max
-                S = S.masked_fill(mask, mask_value)
+                S = S.masked_fill(~mask, mask_value)
 
             S = S - torch.amax(S, dim = -1, keepdim = True)
             A = S.exp()
