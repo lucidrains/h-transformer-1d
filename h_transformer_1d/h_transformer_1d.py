@@ -101,6 +101,7 @@ class HAttention1D(nn.Module):
                 q, k, v = map(lambda t: t[:, :, 0], (q, k, v))
 
             S = einsum('... i d, ... j d -> ... i j', q, k)
+            S = S - torch.amax(S, dim = -1, keepdim = True)
 
             if mask_A:
                 device = q.device
