@@ -19,6 +19,7 @@ class PreNorm(nn.Module):
         self.norm = nn.LayerNorm(dim)
 
     def forward(self, x, **kwargs):
+        x = self.norm(x)
         return self.fn(x, **kwargs)
 
 class FeedForward(nn.Module):
@@ -94,15 +95,37 @@ class HAttention1D(nn.Module):
 
         # half-attention function
 
-        def calculate_Y_and_A(q, k, v, causal = False, off_diagonal_causal = False):
+        def calculate_Y_and_A(q, k, v, mask_A = False, remove_right_off_diagonals = False):
+            if remove_right_off_diagonals:
+                q, k, v = map(lambda t: rearrange(t, 'b (n r) z d -> b n r z d', r = 2), (q, k, v))
+                q, k, v = map(lambda t: t[:, :, 1], (q, k, v))
+
             S = einsum('... i d, ... j d -> ... i j', q, k)
+
+            if mask_A:
+                device = q.device
+                n = S.shape[-1]
+                mask_value = -torch.finfo(S.dtype).max
+                mask = torch.ones((n, n), device = device).triu(1).bool()
+                mask = rearrange(mask, 'i j -> () () i j')
+                S = S.masked_fill(mask, mask_value)
+
             A = S.exp()
             y = einsum('... i j, ... j d -> ... i d', A, v)
 
-            A = diagonal(A.cumsum(dim = -1), dim1 = -2, dim2 = -1) if causal else A.sum(dim = -1)
-            A = rearrange(A, 'b ... i -> b (... i)')
+            A = A.sum(dim = -1)
+
+            if remove_right_off_diagonals:
+                y = rearrange(y, 'b n z d -> b n () z d')
+                y = F.pad(y, (0, 0, 0, 0, 1, 0), value = 0.)
+                y = rearrange(y, 'b n r z d -> b (n r) z d')
+
+                A = rearrange(A, 'b n z -> b n () z')
+                A = F.pad(A, (0, 0, 1, 0), value = 0.)
+                A = rearrange(A, 'b n r z -> b (n r) z')
 
             y = rearrange(y, 'b ... n d -> b (... n) d')
+            A = rearrange(A, 'b ... i -> b (... i)')
             return y, A
 
         # calculate Ys, as in the paper
@@ -117,10 +140,10 @@ class HAttention1D(nn.Module):
             k = torch.flip(k, dims = (2,))                          # so we pay attention to the off-diagonal blocks in the attention matrix
             k = rearrange(k, 'b n r z d -> b (n r) z d')
 
-            coarsened_Y = calculate_Y_and_A(q, k, v, off_diagonal_causal = causal)
+            coarsened_Y = calculate_Y_and_A(q, k, v, remove_right_off_diagonals = causal)
             Ys.append(coarsened_Y)
 
-        top_level_Y = calculate_Y_and_A(*map(to_blocks, top_level_qkvs), causal = causal)
+        top_level_Y = calculate_Y_and_A(*map(to_blocks, top_level_qkvs), mask_A = causal)
         Ys.append(top_level_Y)
 
         # interpolate
