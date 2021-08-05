@@ -104,7 +104,7 @@ class HAttention1D(nn.Module):
 
         # calculate number of levels until 2 x 2
 
-        num_levels = int(log2(n // bsz)) - 1
+        num_levels = int(log2(pad_to_len // bsz)) - 1
 
         # coarsening
 
@@ -187,7 +187,7 @@ class HAttention1D(nn.Module):
         Y = 0
         A = 0
 
-        for Y_level, A_level in Ys[-2:]:
+        for Y_level, A_level in Ys:
             if torch.is_tensor(Y):
                 Y = repeat(Y, 'b n d -> b (n r) d', r = 2)
 

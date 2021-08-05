@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
   name = 'h-transformer-1d',
   packages = find_packages(),
-  version = '0.0.4',
+  version = '0.0.5',
   license='MIT',
   description = 'H-Transformer 1D - Pytorch',
   author = 'Phil Wang',
