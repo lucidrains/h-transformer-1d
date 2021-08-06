@@ -57,6 +57,16 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+# hierarchical attention helper functions
+
+def flip_every_two(t):
+    t = rearrange(t, 'b (n r) ... -> b n r ...', r = 2)
+    t = torch.flip(t, dims = (2,))                          # so we pay attention to the off-diagonal blocks in the attention matrix
+    t = rearrange(t, 'b n r ... -> b (n r) ...')
+    return t
+
+# attention
+
 class HAttention1D(nn.Module):
     def __init__(
         self,
@@ -65,7 +75,8 @@ class HAttention1D(nn.Module):
         heads = 8,
         dim_head = 64,
         block_size = 16,
-        eps = 1e-8
+        eps = 1e-8,
+        **kwargs
     ):
         super().__init__()
         self.eps = eps
@@ -148,12 +159,6 @@ class HAttention1D(nn.Module):
             A = rearrange(A, 'b ... i -> b (... i)')
             return y, A
 
-        def flip_every_two(t):
-            t = rearrange(t, 'b (n r) ... -> b n r ...', r = 2)
-            t = torch.flip(t, dims = (2,))                          # so we pay attention to the off-diagonal blocks in the attention matrix
-            t = rearrange(t, 'b n r ... -> b (n r) ...')
-            return t
-
         to_blocks = lambda t: rearrange(t, 'b (n z) ... -> b n z ...', z = bsz)
 
         # calculate Ys, as in the paper
@@ -207,6 +212,188 @@ class HAttention1D(nn.Module):
 
         return self.to_out(out[:, :n])
 
+# causal attention
+
+class CausalHAttention1D(nn.Module):
+    def __init__(
+        self,
+        dim,
+        *,
+        max_seq_len,
+        heads = 8,
+        dim_head = 64,
+        block_size = 16,
+        eps = 1e-8
+    ):
+        super().__init__()
+        self.eps = eps
+        self.heads = heads
+        self.scale = dim_head ** -0.5
+        self.block_size = block_size
+        inner_dim = heads * dim_head
+
+        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
+        self.to_out = nn.Linear(inner_dim, dim)
+
+        # derive mask
+
+        num_levels = int(log2(max_seq_len // block_size)) - 1
+        root_seq = torch.arange(max_seq_len)
+        seqs = [root_seq]
+        seq = root_seq
+
+        for ind in range(num_levels):
+            seq = rearrange(seq, '(n r) -> n r', r = 2)
+            seq = seq.amax(dim = -1)
+            expanded_mask_seq = repeat(seq, 'n -> (n r)', r = (2 ** (ind + 1)))
+            seqs.append(expanded_mask_seq)
+
+        seq_keys = torch.stack(seqs, dim = 0)
+        mask = seq_keys > rearrange(root_seq, 'n -> () n')
+        self.register_buffer('mask', mask)
+
+    def forward(self, x, **kwargs):
+        b, n, h, device, bsz, eps = *x.shape[:2], self.heads, x.device, self.block_size, self.eps
+
+        # pad sequence length to power of 2
+
+        pad_to_len = 2 ** ceil(log2(n))
+        padding = pad_to_len - n
+
+        if padding != 0:
+            x = F.pad(x, (0, 0, 0, padding), value = 0.)
+
+        # derive queries, keys, values
+
+        q, k, v = self.to_qkv(x).chunk(3, dim = -1)
+
+        # split out heads, and also divide sequence into blocks
+
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h = h), (q, k, v))
+
+        # scale
+
+        q = q * self.scale
+
+        # calculate number of levels until 2 x 2
+
+        num_levels = int(log2(pad_to_len // bsz)) - 1
+
+        # coarsening
+
+        qkvs = [(q, k, v)]
+
+        for level in range(num_levels):
+            q, k, v = map(lambda t: rearrange(t, 'b (n r) d -> b n r d', r = 2), (q, k, v))
+
+            # masked mean for queries and keys, but not values
+
+            q = q.mean(dim = 2)
+            k = k.mean(dim = 2)
+            v = v.sum(dim = 2)
+
+            coarsened_qkvs = (q, k, v)
+            qkvs.append(coarsened_qkvs)
+
+        # half-attention function
+
+        def calculate_Y_and_A(q, k, v, mask_right_off_diagonals = False, causal_mask_diagonal = False):
+            if mask_right_off_diagonals:
+                q, k, v = map(lambda t: rearrange(t, 'b (n r) ... -> b n r ...', r = 2), (q, k, v))
+                q, k, v = map(lambda t: t[:, :, 1], (q, k, v))
+
+            S = einsum('... i d, ... j d -> ... i j', q, k)
+
+            if causal_mask_diagonal:
+                causal_mask = torch.ones(*S.shape[-2:], device = S.device).triu(1).bool()
+                mask_value = -torch.finfo(S.dtype).max
+                causal_mask = rearrange(causal_mask, 'i j -> () () i j')
+                S = S.masked_fill(causal_mask, mask_value)
+
+            S = S - torch.amax(S, dim = -1, keepdim = True)
+            A = S.exp()
+
+            y = einsum('... i j, ... j d -> ... i d', A, v)
+
+            A = A.sum(dim = -1)
+
+            if mask_right_off_diagonals:
+                y, A = map(lambda t: rearrange(t, 'b n ... -> b n () ...'), (y, A))
+                y = F.pad(y, (0, 0, 0, 0, 1, 0), value = 0.)
+                A = F.pad(A, (0, 0, 1, 0), value = 0.)
+
+            y = rearrange(y, 'b ... d -> b (...) d')
+            A = rearrange(A, 'b ... -> b (...)')
+            return y, A
+
+        to_blocks = lambda t: rearrange(t, 'b (n z) ... -> b n z ...', z = bsz)
+
+        # calculate Ys, as in the paper
+
+        Ys = []
+
+        for ind, (q, k, v) in enumerate(reversed(qkvs)):
+            is_last = ind == (len(qkvs) - 1)
+
+            q, k, v = map(to_blocks, (q, k, v))
+
+            # flip keys and values to capture the off-diagonals
+
+            if not is_last:
+                k, v = map(flip_every_two, (k, v))
+
+            Y_level = calculate_Y_and_A(q, k, v, mask_right_off_diagonals = not is_last, causal_mask_diagonal = is_last)
+            Ys.append(Y_level)
+
+        # interpolate
+
+        def safe_cat(acc, el, dim = 0):
+            if not exists(acc):
+                return el
+            return torch.cat((el, acc), dim = dim)
+
+        Y = None
+        A = None
+
+        for Y_level, A_level in Ys:
+            Y_level, A_level = map(lambda t: rearrange(t, '... -> () ...'), (Y_level, A_level))
+
+            if torch.is_tensor(Y):
+                Y = repeat(Y, '... n d -> ... (n r) d', r = 2)
+
+            if torch.is_tensor(A):
+                A = repeat(A, '... n -> ... (n r)', r = 2)
+
+            Y = safe_cat(Y, Y_level)
+            A = safe_cat(A, A_level)
+
+        # create causal mask for Y and A
+
+        causal_mask = self.mask[:(num_levels + 1), :pad_to_len]
+
+        # mask and sum
+
+        Y_causal_mask = rearrange(causal_mask, 'h n -> h () n ()')
+        A_causal_mask = rearrange(causal_mask, 'h n -> h () n')
+
+        Y = Y.masked_fill(Y_causal_mask, 0.)
+        A = A.masked_fill(A_causal_mask, 0.)
+
+        Y = Y.sum(dim = 0)
+        A = A.sum(dim = 0)
+
+        # normalize
+
+        out = Y / rearrange(A + eps, 'b n -> b n ()')
+
+        # merge heads
+
+        out = rearrange(out, '(b h) n d -> b n (h d)', h = h)
+
+        # combine out
+
+        return self.to_out(out[:, :n])
+
 # main class
 
 class HTransformer1D(nn.Module):
@@ -217,6 +404,7 @@ class HTransformer1D(nn.Module):
         dim,
         depth,
         max_seq_len,
+        causal = False,
         heads = 8,
         dim_head = 64,
         ff_mult = 4,
@@ -233,9 +421,11 @@ class HTransformer1D(nn.Module):
 
         self.layers = nn.ModuleList([])
 
+        attn_class = CausalHAttention1D if causal else HAttention1D
+
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                PreNorm(dim, HAttention1D(dim, dim_head = dim_head, heads = heads, block_size = block_size)),
+                PreNorm(dim, attn_class(dim, dim_head = dim_head, heads = heads, block_size = block_size, max_seq_len = max_seq_len)),
                 PreNorm(dim, FeedForward(dim, mult = ff_mult))
             ]))
 
