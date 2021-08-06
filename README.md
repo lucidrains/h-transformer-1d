@@ -4,8 +4,6 @@
 
 Implementation of <a href="https://arxiv.org/abs/2107.11906">H-Transformer-1D</a>, Transformer using hierarchical Attention for sequence learning with subquadratic costs.
 
-For now, the H-Transformer will only act as a long-context encoder
-
 ## Install
 
 ```bash
@@ -22,6 +20,7 @@ model = HTransformer1D(
     num_tokens = 256,          # number of tokens
     dim = 512,                 # dimension
     depth = 2,                 # depth
+    causal = False,            # autoregressive or not
     max_seq_len = 8192,        # maximum sequence length
     heads = 8,                 # heads
     dim_head = 64,             # dimension per head
