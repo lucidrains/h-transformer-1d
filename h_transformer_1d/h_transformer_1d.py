@@ -3,6 +3,7 @@ import torch
 from torch import nn, einsum, diagonal
 import torch.nn.functional as F
 
+from rotary_embedding_torch import apply_rotary_emb, RotaryEmbedding
 from einops import rearrange, reduce, repeat
 
 # helpers
@@ -75,6 +76,7 @@ class HAttention1D(nn.Module):
         heads = 8,
         dim_head = 64,
         block_size = 16,
+        pos_emb = None,
         eps = 1e-8,
         **kwargs
     ):
@@ -85,6 +87,7 @@ class HAttention1D(nn.Module):
         self.block_size = block_size
         inner_dim = heads * dim_head
 
+        self.pos_emb = pos_emb
         self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
         self.to_out = nn.Linear(inner_dim, dim)
 
@@ -112,6 +115,13 @@ class HAttention1D(nn.Module):
         # scale
 
         q = q * self.scale
+
+        # rotary pos emb
+
+        if exists(self.pos_emb):
+            freqs = self.pos_emb(torch.arange(n, device = device), cache_key = n)
+            freqs = rearrange(freqs, 'n d -> () n d')
+            q, k, v = map(lambda t: apply_rotary_emb(freqs, t), (q, k, v))
 
         # calculate number of levels until 2 x 2
 
@@ -223,7 +233,8 @@ class CausalHAttention1D(nn.Module):
         heads = 8,
         dim_head = 64,
         block_size = 16,
-        eps = 1e-8
+        eps = 1e-8,
+        pos_emb = None
     ):
         super().__init__()
         self.eps = eps
@@ -231,6 +242,8 @@ class CausalHAttention1D(nn.Module):
         self.scale = dim_head ** -0.5
         self.block_size = block_size
         inner_dim = heads * dim_head
+
+        self.pos_emb = pos_emb
 
         self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
         self.to_out = nn.Linear(inner_dim, dim)
@@ -274,6 +287,13 @@ class CausalHAttention1D(nn.Module):
         # scale
 
         q = q * self.scale
+
+        # rotary embedding
+
+        if exists(self.pos_emb):
+            freqs = self.pos_emb(torch.arange(n, device = device), cache_key = n)
+            freqs = rearrange(freqs, 'n d -> () n d')
+            q, k, v = map(lambda t: apply_rotary_emb(freqs, t), (q, k, v))
 
         # calculate number of levels until 2 x 2
 
@@ -408,7 +428,8 @@ class HTransformer1D(nn.Module):
         heads = 8,
         dim_head = 64,
         ff_mult = 4,
-        block_size = 128      # this is the Nr in the paper - Nb = (max_seq_len / tokens_per_block)
+        block_size = 128,     # this is the Nr in the paper - Nb = (max_seq_len / tokens_per_block)
+        pos_emb = None
     ):
         super().__init__()
         assert (max_seq_len % block_size) == 0, 'maximum sequence length must be divisible by the block size'
@@ -416,16 +437,17 @@ class HTransformer1D(nn.Module):
         assert log2(max_seq_len // block_size).is_integer(), f'number of blocks {num_blocks} must be a power of 2'
 
         self.token_emb = nn.Embedding(num_tokens, dim)
-        self.pos_emb = nn.Embedding(max_seq_len, dim)
+        self.pos_emb = RotaryEmbedding(dim = dim_head)
         self.max_seq_len = max_seq_len
 
         self.layers = nn.ModuleList([])
 
         attn_class = CausalHAttention1D if causal else HAttention1D
+        attn_kwargs = dict(max_seq_len = max_seq_len) if causal else dict()
 
-        for _ in range(depth):
+        for ind in range(depth):
             self.layers.append(nn.ModuleList([
-                PreNorm(dim, attn_class(dim, dim_head = dim_head, heads = heads, block_size = block_size, max_seq_len = max_seq_len)),
+                PreNorm(dim, attn_class(dim, dim_head = dim_head, heads = heads, block_size = block_size, pos_emb = self.pos_emb, **attn_kwargs)),
                 PreNorm(dim, FeedForward(dim, mult = ff_mult))
             ]))
 
@@ -439,9 +461,6 @@ class HTransformer1D(nn.Module):
         assert n <= self.max_seq_len, 'sequence length must be less than the maximum sequence length'
 
         x = self.token_emb(x)
-
-        pos_emb = self.pos_emb(torch.arange(n, device = device))
-        x = x + rearrange(pos_emb, 'n d -> () n d')
 
         for attn, ff in self.layers:
             x = attn(x, mask = mask) + x
