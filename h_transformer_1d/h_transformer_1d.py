@@ -112,6 +112,9 @@ class HAttention1D(nn.Module):
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h = h), (q, k, v))
 
+        if exists(mask):
+            mask = repeat(mask, 'b n -> (b h) n', h = h)
+
         # scale
 
         q = q * self.scale
@@ -135,7 +138,7 @@ class HAttention1D(nn.Module):
             q, k, v = map(lambda t: rearrange(t, 'b (n r) d -> b n r d', r = 2), (q, k, v))
 
             if exists(mask):
-                mask = rearrange(mask, 'b (n r) -> b n r', r = 2)
+                mask = repeat(mask, 'b (n r) -> b n r', r = 2)
 
             # masked mean for queries and keys, but not values
 
