@@ -294,7 +294,7 @@ class CausalHAttention1D(nn.Module):
         # rotary embedding
 
         if exists(self.pos_emb):
-            freqs = self.pos_emb(torch.arange(n, device = device), cache_key = n)
+            freqs = self.pos_emb(torch.arange(pad_to_len, device = device), cache_key = pad_to_len)
             freqs = rearrange(freqs, 'n d -> () n d')
             q, k, v = map(lambda t: apply_rotary_emb(freqs, t), (q, k, v))
 
