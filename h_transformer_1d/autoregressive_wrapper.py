@@ -4,6 +4,9 @@ import torch.nn.functional as F
 
 # helper function
 
+def exists(val):
+    return val is not None
+
 def eval_decorator(fn):
     def inner(model, *args, **kwargs):
         was_training = model.training
@@ -56,8 +59,15 @@ class AutoregressiveWrapper(nn.Module):
 
             out = torch.cat((out, sample), dim=-1)
 
-            if eos_token is not None and (sample == eos_token).all():
-                break
+            if exists(eos_token):
+                is_eos_token = (out == eos_token)
+
+                if is_eos_token.any(dim = -1).all():
+                    # mask out everything after the eos tokens
+                    shifted_is_eos_tokens = F.pad(is_eos_tokens, (1, -1))
+                    mask = shifted_is_eos_tokens.float().cumsum(dim = -1) >= 1
+                    out = out.masked_fill(mask, self.pad_value)
+                    break
 
         out = out[:, t:]
 
