@@ -161,7 +161,7 @@ class HAttention1D(nn.Module):
                 mask_value = -torch.finfo(S.dtype).max
                 S = S.masked_fill(~mask, mask_value)
 
-            S = S - torch.amax(S, dim = -1, keepdim = True)
+            S = S - torch.max(S, dim = -1, keepdim = True).values
             A = S.exp()
 
             y = einsum('... i j, ... j d -> ... i d', A, v)
@@ -260,7 +260,7 @@ class CausalHAttention1D(nn.Module):
 
         for ind in range(num_levels):
             seq = rearrange(seq, '(n r) -> n r', r = 2)
-            seq = seq.amax(dim = -1)
+            seq = seq.max(dim = -1).values
             expanded_mask_seq = repeat(seq, 'n -> (n r)', r = (2 ** (ind + 1)))
             seqs.append(expanded_mask_seq)
 
