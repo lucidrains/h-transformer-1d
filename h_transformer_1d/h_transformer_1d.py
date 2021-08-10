@@ -3,6 +3,7 @@ import torch
 from torch import nn, einsum, diagonal
 import torch.nn.functional as F
 
+from h_transformer_1d.reversible import ReversibleSequence, SequentialSequence
 from rotary_embedding_torch import apply_rotary_emb, RotaryEmbedding
 from einops import rearrange, reduce, repeat
 
@@ -432,7 +433,8 @@ class HTransformer1D(nn.Module):
         dim_head = 64,
         ff_mult = 4,
         block_size = 128,     # this is the Nr in the paper - Nb = (max_seq_len / tokens_per_block)
-        pos_emb = None
+        pos_emb = None,
+        reversible = False
     ):
         super().__init__()
         assert (max_seq_len % block_size) == 0, 'maximum sequence length must be divisible by the block size'
@@ -443,16 +445,22 @@ class HTransformer1D(nn.Module):
         self.pos_emb = RotaryEmbedding(dim = dim_head)
         self.max_seq_len = max_seq_len
 
-        self.layers = nn.ModuleList([])
+        layers = nn.ModuleList([])
 
         attn_class = CausalHAttention1D if causal else HAttention1D
         attn_kwargs = dict(max_seq_len = max_seq_len) if causal else dict()
 
         for ind in range(depth):
-            self.layers.append(nn.ModuleList([
+            layers.append(nn.ModuleList([
                 PreNorm(dim, attn_class(dim, dim_head = dim_head, heads = heads, block_size = block_size, pos_emb = self.pos_emb, **attn_kwargs)),
                 PreNorm(dim, FeedForward(dim, mult = ff_mult))
             ]))
+
+        execute_type = ReversibleSequence if reversible else SequentialSequence
+        route_attn = ((True, False),) * depth
+        attn_route_map = {'mask': route_attn}
+
+        self.layers = execute_type(layers, args_route = {**attn_route_map})
 
         self.to_logits = nn.Sequential(
             nn.LayerNorm(dim),
@@ -462,11 +470,6 @@ class HTransformer1D(nn.Module):
     def forward(self, x, mask = None):
         b, n, device = *x.shape, x.device
         assert n <= self.max_seq_len, 'sequence length must be less than the maximum sequence length'
-
         x = self.token_emb(x)
-
-        for attn, ff in self.layers:
-            x = attn(x, mask = mask) + x
-            x = ff(x) + x
-
+        x = self.layers(x)
         return self.to_logits(x)

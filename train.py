@@ -19,7 +19,7 @@ LEARNING_RATE = 2e-4
 VALIDATE_EVERY  = 100
 GENERATE_EVERY  = 500
 GENERATE_LENGTH = 512
-SEQ_LEN = 1024
+SEQ_LEN = 4096
 
 # helpers
 
@@ -42,7 +42,8 @@ model = HTransformer1D(
     max_seq_len = SEQ_LEN,
     depth = 8,
     heads = 8,
-    causal = True
+    causal = True,
+    reversible = True
 )
 
 model = AutoregressiveWrapper(model)

@@ -19,12 +19,13 @@ from h_transformer_1d import HTransformer1D
 model = HTransformer1D(
     num_tokens = 256,          # number of tokens
     dim = 512,                 # dimension
-    depth = 2,                 # depth
+    depth = 12,                # depth
     causal = False,            # autoregressive or not
     max_seq_len = 8192,        # maximum sequence length
     heads = 8,                 # heads
     dim_head = 64,             # dimension per head
-    block_size = 128           # block size
+    block_size = 128,          # block size
+    reversible = True          # use reversibility, to save on memory with increased depth
 )
 
 x = torch.randint(0, 256, (1, 8000))   # variable sequence length
