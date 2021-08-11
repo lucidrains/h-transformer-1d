@@ -2,7 +2,7 @@
 
 ## H-Transformer-1D
 
-Implementation of <a href="https://arxiv.org/abs/2107.11906">H-Transformer-1D</a>, Transformer using hierarchical Attention for sequence learning with subquadratic costs.
+Implementation of <a href="https://arxiv.org/abs/2107.11906">H-Transformer-1D</a>, Transformer using hierarchical Attention for sequence learning with subquadratic costs. The encoder (non-autoregressive) flavor of this architecture currently holds the throne for <a href="https://github.com/google-research/long-range-arena">Long Range Arena</a>, a benchmark for efficient transformers.
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1X4XJ1wwfeBHbuexP9ko3lTK7e5WxaO44?usp=sharing) 131k tokens
 
