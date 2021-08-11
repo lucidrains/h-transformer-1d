@@ -4,6 +4,8 @@
 
 Implementation of <a href="https://arxiv.org/abs/2107.11906">H-Transformer-1D</a>, Transformer using hierarchical Attention for sequence learning with subquadratic costs.
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1X4XJ1wwfeBHbuexP9ko3lTK7e5WxaO44?usp=sharing) 131k tokens
+
 ## Install
 
 ```bash
