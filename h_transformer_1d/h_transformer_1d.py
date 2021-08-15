@@ -30,6 +30,15 @@ def masked_aggregate(tensor, mask = None, dim = -1, average = True):
     agg.masked_fill_(total_el == 0, 0.)
     return agg
 
+def shift(t, amount, mask = None):
+    if amount == 0:
+        return t
+
+    if exists(mask):
+        t = t.masked_fill(~mask[..., None], 0.)
+
+    return F.pad(t, (0, 0, amount, -amount), value = 0.)
+
 # helper classes
 
 class PreNorm(nn.Module):
@@ -58,6 +67,25 @@ class FeedForward(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
+# token shifting
+
+class PreShiftTokens(nn.Module):
+    def __init__(self, shifts, fn):
+        super().__init__()
+        self.fn = fn
+        self.shifts = tuple(shifts)
+
+    def forward(self, x, **kwargs):
+        mask = kwargs.get('mask', None)
+        shifts = self.shifts
+        segments = len(shifts)
+        feats_per_shift = x.shape[-1] // segments
+        splitted = x.split(feats_per_shift, dim = -1)
+        segments_to_shift, rest = splitted[:segments], splitted[segments:]
+        segments_to_shift = list(map(lambda args: shift(*args, mask = mask), zip(segments_to_shift, shifts)))
+        x = torch.cat((*segments_to_shift, *rest), dim = -1)
+        return self.fn(x, **kwargs)
 
 # hierarchical attention helper functions
 
@@ -434,7 +462,8 @@ class HTransformer1D(nn.Module):
         ff_mult = 4,
         block_size = 128,     # this is the Nr in the paper - Nb = (max_seq_len / tokens_per_block)
         pos_emb = None,
-        reversible = False
+        reversible = False,
+        shift_tokens = False
     ):
         super().__init__()
         assert (max_seq_len % block_size) == 0, 'maximum sequence length must be divisible by the block size'
@@ -450,11 +479,17 @@ class HTransformer1D(nn.Module):
         attn_class = CausalHAttention1D if causal else HAttention1D
         attn_kwargs = dict(max_seq_len = max_seq_len) if causal else dict()
 
+        shift_token_ranges = (0, 1) if shift_tokens else (-1, 0, 1)
+
         for ind in range(depth):
-            layers.append(nn.ModuleList([
-                PreNorm(dim, attn_class(dim, dim_head = dim_head, heads = heads, block_size = block_size, pos_emb = self.pos_emb, **attn_kwargs)),
-                PreNorm(dim, FeedForward(dim, mult = ff_mult))
-            ]))
+            attn = attn_class(dim, dim_head = dim_head, heads = heads, block_size = block_size, pos_emb = self.pos_emb, **attn_kwargs)
+            ff = FeedForward(dim, mult = ff_mult)
+
+            if shift_tokens:
+                attn, ff = map(lambda t: PreShiftTokens(shift_token_ranges, t), (attn, ff))\
+
+            attn, ff = map(lambda t: PreNorm(dim, t), (attn, ff))
+            layers.append(nn.ModuleList([attn ,ff]))
 
         execute_type = ReversibleSequence if reversible else SequentialSequence
         route_attn = ((True, False),) * depth

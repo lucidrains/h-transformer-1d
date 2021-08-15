@@ -27,7 +27,8 @@ model = HTransformer1D(
     heads = 8,                 # heads
     dim_head = 64,             # dimension per head
     block_size = 128,          # block size
-    reversible = True          # use reversibility, to save on memory with increased depth
+    reversible = True,         # use reversibility, to save on memory with increased depth
+    shift_tokens = True        # whether to shift half the feature space by one along the sequence dimension, for faster convergence (experimental feature)
 )
 
 x = torch.randint(0, 256, (1, 8000))   # variable sequence length
@@ -48,5 +49,18 @@ logits = model(x, mask = mask) # (1, 8000, 256)
     eprint  = {2107.11906},
     archivePrefix = {arXiv},
     primaryClass = {cs.LG}
+}
+```
+
+```bibtex
+@software{peng_bo_2021_5196578,
+    author       = {PENG Bo},
+    title        = {BlinkDL/RWKV-LM: 0.01},
+    month        = aug,
+    year         = 2021,
+    publisher    = {Zenodo},
+    version      = {0.01},
+    doi          = {10.5281/zenodo.5196578},
+    url          = {https://doi.org/10.5281/zenodo.5196578%7D
 }
 ```
