@@ -157,7 +157,8 @@ class HAttention1D(nn.Module):
 
         # calculate number of levels until 2 x 2
 
-        num_levels = int(log2(pad_to_len // bsz)) - 1
+        num_levels = int(log2(pad_to_len // bsz)) - 2
+        assert num_levels >= 0, 'number of levels must be at least greater than 0'
 
         # coarsening
 
@@ -180,6 +181,8 @@ class HAttention1D(nn.Module):
 
             coarsened_qkvs = (q, k, v, mask)
             qkvs.append(coarsened_qkvs)
+
+        qkvs = [qkvs[0], *qkvs]  # duplicate the finest resolution an extra time, for the base diagonal
 
         # half-attention function
 
@@ -234,11 +237,13 @@ class HAttention1D(nn.Module):
         Y = 0
         A = 0
 
-        for Y_level, A_level in Ys:
-            if torch.is_tensor(Y):
+        for ind, (Y_level, A_level) in enumerate(Ys):
+            is_last = ind == (len(Ys) - 1)
+
+            if not is_last and torch.is_tensor(Y):
                 Y = repeat(Y, 'b n d -> b (n r) d', r = 2)
 
-            if torch.is_tensor(A):
+            if not is_last and torch.is_tensor(A):
                 A = repeat(A, 'b n -> b (n r)', r = 2)
 
             Y = Y_level + Y
@@ -486,7 +491,7 @@ class HTransformer1D(nn.Module):
             ff = FeedForward(dim, mult = ff_mult)
 
             if shift_tokens:
-                attn, ff = map(lambda t: PreShiftTokens(shift_token_ranges, t), (attn, ff))\
+                attn, ff = map(lambda t: PreShiftTokens(shift_token_ranges, t), (attn, ff))
 
             attn, ff = map(lambda t: PreNorm(dim, t), (attn, ff))
             layers.append(nn.ModuleList([attn ,ff]))
