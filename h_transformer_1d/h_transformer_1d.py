@@ -511,5 +511,5 @@ class HTransformer1D(nn.Module):
         b, n, device = *x.shape, x.device
         assert n <= self.max_seq_len, 'sequence length must be less than the maximum sequence length'
         x = self.token_emb(x)
-        x = self.layers(x)
+        x = self.layers(x, mask = mask)
         return self.to_logits(x)
