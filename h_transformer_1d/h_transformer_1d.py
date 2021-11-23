@@ -1,4 +1,6 @@
 from math import log2, ceil
+from functools import wraps
+
 import torch
 from torch import nn, einsum, diagonal
 import torch.nn.functional as F
@@ -88,6 +90,16 @@ class PreShiftTokens(nn.Module):
         return self.fn(x, **kwargs)
 
 # hierarchical attention helper functions
+
+def cast_for_op(cast_type, fn):
+    @wraps(fn)
+    def inner(t, *args, **kwargs):
+        orig_type = t.dtype
+        t = t.type(cast_type)
+        out = fn(t, *args, **kwargs)
+        out = out.type(orig_type)
+        return out
+    return inner
 
 def flip_every_two(t):
     t = rearrange(t, 'b (n r) ... -> b n r ...', r = 2)
@@ -221,7 +233,7 @@ class HAttention1D(nn.Module):
             if exists(mask):
                 mask = to_blocks(mask)
                 q_mask = mask
-                k_mask = flip_every_two(mask) if not is_last else mask
+                k_mask = cast_for_op(torch.int, flip_every_two)(mask) if not is_last else mask
                 S_mask = rearrange(q_mask, '... n -> ... n ()') * rearrange(k_mask, '... n -> ... () n')
 
             # flip keys and values to capture the off-diagonals
