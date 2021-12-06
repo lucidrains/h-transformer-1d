@@ -132,8 +132,11 @@ class HAttention1D(nn.Module):
         self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
         self.to_out = nn.Linear(inner_dim, dim)
 
-    def forward(self, x, mask = None):
+    def forward(self, x, mask = None, key_value_mask = None):
         b, n, h, device, bsz, eps = *x.shape[:2], self.heads, x.device, self.block_size, self.eps
+
+        if key_value_mask is None:
+            key_value_mask = mask
 
         # pad sequence length to power of 2
 
@@ -144,6 +147,7 @@ class HAttention1D(nn.Module):
             x = F.pad(x, (0, 0, 0, padding), value = 0.)
             if exists(mask):
                 mask = F.pad(mask, (0, padding), value = False)
+                key_value_mask = F.pad(key_value_mask, (0, padding), value = False)
 
         # derive queries, keys, values
 
@@ -155,6 +159,7 @@ class HAttention1D(nn.Module):
 
         if exists(mask):
             mask = repeat(mask, 'b n -> (b h) n', h = h)
+            key_value_mask = repeat(key_value_mask, 'b n -> (b h) n', h = h)
 
         # scale
 
@@ -174,24 +179,26 @@ class HAttention1D(nn.Module):
 
         # coarsening
 
-        qkvs = [(q, k, v, mask)]
+        qkvs = [(q, k, v, mask, key_value_mask)]
 
         for level in range(num_levels):
             q, k, v = map(lambda t: rearrange(t, 'b (n r) d -> b n r d', r = 2), (q, k, v))
 
             if exists(mask):
                 mask = repeat(mask, 'b (n r) -> b n r', r = 2)
+                key_value_mask = repeat(key_value_mask, 'b (n r) -> b n r', r = 2)
 
             # masked mean for queries and keys, but not values
 
             q = masked_aggregate(q, mask, dim = 2)
-            k = masked_aggregate(k, mask, dim = 2)
-            v = masked_aggregate(v, mask, dim = 2, average = False)
+            k = masked_aggregate(k, key_value_mask, dim = 2)
+            v = masked_aggregate(v, key_value_mask, dim = 2, average = False)
 
             if exists(mask):
                 mask = torch.any(mask, dim = 2)
+                key_value_mask = torch.any(key_value_mask, dim = 2)
 
-            coarsened_qkvs = (q, k, v, mask)
+            coarsened_qkvs = (q, k, v, mask, key_value_mask)
             qkvs.append(coarsened_qkvs)
 
         qkvs = [qkvs[0], *qkvs]  # duplicate the finest resolution an extra time, for the base diagonal
@@ -222,7 +229,7 @@ class HAttention1D(nn.Module):
 
         Ys = []
 
-        for ind, (q, k, v, mask) in enumerate(reversed(qkvs)):
+        for ind, (q, k, v, mask, key_value_mask) in enumerate(reversed(qkvs)):
             is_last = ind == (len(qkvs) - 1)
 
             q, k, v = map(to_blocks, (q, k, v))
@@ -232,8 +239,9 @@ class HAttention1D(nn.Module):
             S_mask = None
             if exists(mask):
                 mask = to_blocks(mask)
+                key_value_mask = to_blocks(key_value_mask)
                 q_mask = mask
-                k_mask = cast_for_op(torch.int, flip_every_two)(mask) if not is_last else mask
+                k_mask = cast_for_op(torch.int, flip_every_two)(key_value_mask) if not is_last else key_value_mask
                 S_mask = rearrange(q_mask, '... n -> ... n ()') * rearrange(k_mask, '... n -> ... () n')
 
             # flip keys and values to capture the off-diagonals
