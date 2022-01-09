@@ -169,8 +169,8 @@ class HAttention1D(nn.Module):
 
         # calculate number of levels until 2 x 2
 
-        num_levels = int(log2(pad_to_len // bsz)) - 2
-        assert num_levels >= 0, 'number of levels must be at least greater than 0'
+        num_levels = int(log2(pad_to_len // bsz)) - 1
+        assert num_levels >= -1, 'block size cannot be larger than padded matrix dimension'
 
         # coarsening
 
@@ -193,8 +193,6 @@ class HAttention1D(nn.Module):
 
             coarsened_qkvs = (q, k, v, mask)
             qkvs.append(coarsened_qkvs)
-
-        qkvs = [qkvs[0], *qkvs]  # duplicate the finest resolution an extra time, for the base diagonal
 
         # half-attention function
 
@@ -252,10 +250,10 @@ class HAttention1D(nn.Module):
         for ind, (Y_level, A_level) in enumerate(Ys):
             is_last = ind == (len(Ys) - 1)
 
-            if not is_last and torch.is_tensor(Y):
+            if torch.is_tensor(Y):
                 Y = repeat(Y, 'b n d -> b (n r) d', r = 2)
 
-            if not is_last and torch.is_tensor(A):
+            if torch.is_tensor(A):
                 A = repeat(A, 'b n -> b (n r)', r = 2)
 
             Y = Y_level + Y
