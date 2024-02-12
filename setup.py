@@ -6,6 +6,7 @@ setup(
   version = '0.1.9',
   license='MIT',
   description = 'H-Transformer 1D - Pytorch',
+  long_description_content_type = 'text/markdown',
   author = 'Phil Wang',
   author_email = 'lucidrains@gmail.com',
   url = 'https://github.com/lucidrains/h-transformer-1d',
