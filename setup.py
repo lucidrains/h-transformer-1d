@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
   name = 'h-transformer-1d',
   packages = find_packages(),
-  version = '0.1.8',
+  version = '0.1.9',
   license='MIT',
   description = 'H-Transformer 1D - Pytorch',
   author = 'Phil Wang',
@@ -17,7 +17,7 @@ setup(
   ],
   install_requires=[
     'einops>=0.3',
-    'rotary-embedding-torch',
+    'rotary-embedding-torch>=0.5.3',
     'torch>=1.6'
   ],
   classifiers=[
