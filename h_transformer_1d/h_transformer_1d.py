@@ -140,10 +140,12 @@ class HAttention1D(nn.Module):
         pad_to_len = 2 ** ceil(log2(n))
         padding = pad_to_len - n
 
+        if mask is None:
+            mask = torch.ones(x.shape[:2],dtype=torch.bool)
+
         if padding != 0:
             x = F.pad(x, (0, 0, 0, padding), value = 0.)
-            if exists(mask):
-                mask = F.pad(mask, (0, padding), value = False)
+            mask = F.pad(mask, (0, padding), value = False)
 
         # derive queries, keys, values
 
@@ -153,8 +155,7 @@ class HAttention1D(nn.Module):
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h = h), (q, k, v))
 
-        if exists(mask):
-            mask = repeat(mask, 'b n -> (b h) n', h = h)
+        mask = repeat(mask, 'b n -> (b h) n', h = h)
 
         # scale
 
@@ -169,8 +170,8 @@ class HAttention1D(nn.Module):
 
         # calculate number of levels until 2 x 2
 
-        num_levels = int(log2(pad_to_len // bsz)) - 2
-        assert num_levels >= 0, 'number of levels must be at least greater than 0'
+        num_levels = int(log2(pad_to_len // bsz)) - 1
+        assert num_levels >= -1, 'block size cannot be larger than padded matrix dimension'
 
         # coarsening
 
@@ -179,8 +180,7 @@ class HAttention1D(nn.Module):
         for level in range(num_levels):
             q, k, v = map(lambda t: rearrange(t, 'b (n r) d -> b n r d', r = 2), (q, k, v))
 
-            if exists(mask):
-                mask = repeat(mask, 'b (n r) -> b n r', r = 2)
+            mask = repeat(mask, 'b (n r) -> b n r', r = 2)
 
             # masked mean for queries and keys, but not values
 
@@ -188,22 +188,18 @@ class HAttention1D(nn.Module):
             k = masked_aggregate(k, mask, dim = 2)
             v = masked_aggregate(v, mask, dim = 2, average = False)
 
-            if exists(mask):
-                mask = torch.any(mask, dim = 2)
+            mask = torch.any(mask, dim = 2)
 
             coarsened_qkvs = (q, k, v, mask)
             qkvs.append(coarsened_qkvs)
-
-        qkvs = [qkvs[0], *qkvs]  # duplicate the finest resolution an extra time, for the base diagonal
 
         # half-attention function
 
         def calculate_Y_and_A(q, k, v, mask = None):
             S = einsum('... i d, ... j d -> ... i j', q, k)
 
-            if exists(mask):
-                mask_value = -torch.finfo(S.dtype).max
-                S = S.masked_fill(~mask, mask_value)
+            mask_value = -torch.finfo(S.dtype).max
+            S = S.masked_fill(~mask, mask_value)
 
             S = S - torch.max(S, dim = -1, keepdim = True).values
             A = S.exp()
@@ -230,11 +226,10 @@ class HAttention1D(nn.Module):
             # generate the mask for S
 
             S_mask = None
-            if exists(mask):
-                mask = to_blocks(mask)
-                q_mask = mask
-                k_mask = cast_for_op(torch.int, flip_every_two)(mask) if not is_last else mask
-                S_mask = rearrange(q_mask, '... n -> ... n ()') * rearrange(k_mask, '... n -> ... () n')
+            mask = to_blocks(mask)
+            q_mask = mask
+            k_mask = cast_for_op(torch.int, flip_every_two)(mask) if not is_last else mask
+            S_mask = rearrange(q_mask, '... n -> ... n ()') * rearrange(k_mask, '... n -> ... () n')
 
             # flip keys and values to capture the off-diagonals
 
@@ -252,10 +247,10 @@ class HAttention1D(nn.Module):
         for ind, (Y_level, A_level) in enumerate(Ys):
             is_last = ind == (len(Ys) - 1)
 
-            if not is_last and torch.is_tensor(Y):
+            if torch.is_tensor(Y):
                 Y = repeat(Y, 'b n d -> b (n r) d', r = 2)
 
-            if not is_last and torch.is_tensor(A):
+            if torch.is_tensor(A):
                 A = repeat(A, 'b n -> b (n r)', r = 2)
 
             Y = Y_level + Y
